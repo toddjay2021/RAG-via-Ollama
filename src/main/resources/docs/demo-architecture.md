@@ -36,7 +36,11 @@ over Server-Sent Events (SSE).
 1. The browser opens an EventSource to `/api/chat/stream?question=...`.
 2. The question is embedded with the same model used at ingestion time.
 3. The embedding store ranks every segment by cosine similarity and returns
-   the top 3 above a minimum score; they are sent to the browser first.
+   the top 3. Two thresholds then apply: chunks under the absolute minimum
+   score are dropped (guarding against "everything is weak"), and chunks
+   scoring far below the best hit are dropped by a relative margin, so a
+   strong match is not diluted by noise. The survivors are sent to the
+   browser first.
 4. AiServices builds the augmented prompt: the system guardrails, the
    retrieved context excerpts with their source files, and the question.
 5. llama3.2:1b generates the answer and every token is forwarded to the

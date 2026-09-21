@@ -38,7 +38,8 @@ public record RagProperties(Ollama ollama, Embedding embedding, Chunking chunkin
 
     public record Retrieval(
             @DefaultValue("3") int topK,
-            @DefaultValue("0.05") double minScore) {
+            @DefaultValue("0.05") double minScore,
+            @DefaultValue("0.05") double relativeMargin) {
     }
 
     public record Generation(

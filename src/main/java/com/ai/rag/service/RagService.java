@@ -79,7 +79,19 @@ public class RagService {
                 .maxResults(props.retrieval().topK())
                 .minScore(props.retrieval().minScore())
                 .build());
-        return result.matches().stream()
+
+        List<EmbeddingMatch<TextSegment>> matches = result.matches();
+        if (matches.isEmpty()) {
+            return List.of();
+        }
+        // Relative threshold: absolute score scales differ wildly between
+        // embedding providers (TF-IDF tops out around 0.6, nomic-embed-text
+        // floors around 0.7 even for unrelated text), so tail chunks are cut
+        // relative to the best hit instead of against a fixed number. The
+        // absolute floor (min-score) stays as the "everything is weak" guard.
+        double cutoff = matches.get(0).score() - props.retrieval().relativeMargin();
+        return matches.stream()
+                .filter(match -> match.score() >= cutoff)
                 .map(RagService::toSourceInfo)
                 .toList();
     }

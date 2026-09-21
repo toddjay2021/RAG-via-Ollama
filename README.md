@@ -130,7 +130,8 @@ overridden by environment variables (`rag.ollama.model` → `RAG_OLLAMA_MODEL`) 
 | `rag.chunking.size` | `700` | Maximum chunk length |
 | `rag.chunking.overlap` | `120` | Overlap carried into the next chunk |
 | `rag.retrieval.top-k` | `3` | Chunks injected into the prompt |
-| `rag.retrieval.min-score` | `0.05` | Cosine similarity floor |
+| `rag.retrieval.min-score` | `0.05` | Absolute relevance floor (see note below) |
+| `rag.retrieval.relative-margin` | `0.05` | Drop chunks scoring this much below the best hit |
 | `rag.generation.temperature` | `0.2` | Sampling temperature |
 | `rag.generation.num-predict` | `512` | Answer token budget |
 | `server.port` | `8080` | Web UI port |
@@ -141,6 +142,15 @@ semantic (paraphrase-aware) retrieval, start Ollama with embeddings enabled
 (`ollama serve --embeddings`), pull an embedding model (`ollama pull nomic-embed-text`) and set
 `--rag.embedding.provider=ollama` — the bean wiring in `LangChain4jConfig` swaps the model via
 `@ConditionalOnProperty`, nothing else changes.
+
+**About retrieval scores:** the score is langchain4j's relevance score, `(cosine + 1) / 2`, and
+its scale depends on the encoder. nomic-embed-text clusters all sentences in a narrow cone — even
+unrelated text scores ~0.7 — so absolute thresholds must be tuned per provider (measured on the
+bundled corpus: unrelated questions 0.71-0.77 vs on-topic 0.775-0.85 with nomic-embed-text, hence
+`0.77`; unrelated text scores near 0 with TF-IDF, hence `0.05`). The relative margin handles the
+rest model-independently: chunks scoring more than `relative-margin` below the best hit are cut,
+and when *everything* is weak (below `min-score`) no sources are shown at all and the model says
+so.
 
 ## Web API
 
