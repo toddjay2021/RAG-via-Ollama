@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG via Ollama</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #2d333b;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #f97316;
+    --accent-soft: rgba(249, 115, 22, 0.12);
+    --user-bubble: #1c2a3a;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(13, 17, 23, 0.9);
+    position: sticky; top: 0; z-index: 5;
+  }
+  .logo {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: var(--accent-soft);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 21px;
+  }
+  header h1 { font-size: 16px; font-weight: 650; letter-spacing: 0.2px; }
+  header h1 span { color: var(--accent); }
+  .status {
+    margin-left: auto; display: flex; align-items: center; gap: 8px;
+    font: 12px var(--mono); color: var(--muted);
+    flex-wrap: wrap; justify-content: flex-end;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; box-shadow: 0 0 6px #3fb95088; }
+  .badge {
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 2px 10px; background: var(--card);
+  }
+
+  /* ---------- chat area ---------- */
+  main { flex: 1; overflow-y: auto; padding: 26px 22px 10px; }
+  .thread { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+  .hero {
+    max-width: 640px; margin: 8vh auto 0; text-align: center;
+  }
+  .hero h2 { font-size: 26px; margin-bottom: 10px; }
+  .hero h2 em { color: var(--accent); font-style: normal; }
+  .hero p { color: var(--muted); margin-bottom: 26px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+  .chip {
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    border-radius: 999px; padding: 7px 16px; cursor: pointer; font-size: 13.5px;
+    transition: border-color .15s, transform .15s;
+  }
+  .chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+  .msg-user {
+    align-self: flex-end; max-width: 78%;
+    background: var(--user-bubble); border: 1px solid #2b4058;
+    border-radius: 14px 14px 4px 14px;
+    padding: 10px 16px; white-space: pre-wrap;
+  }
+  .msg-ai {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 4px 14px 14px 14px; padding: 14px 18px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .msg-ai .who { font: 11px var(--mono); color: var(--accent); letter-spacing: 1px; text-transform: uppercase; }
+  .answer { white-space: pre-wrap; min-height: 22px; }
+  .answer .caret {
+    display: inline-block; width: 8px; height: 15px; background: var(--accent);
+    vertical-align: text-bottom; margin-left: 2px;
+    animation: blink 0.9s steps(2, start) infinite;
+  }
+  @keyframes blink { to { visibility: hidden; } }
+
+  /* sources */
+  details.sources { border-top: 1px dashed var(--border); padding-top: 10px; }
+  details.sources summary {
+    cursor: pointer; color: var(--muted); font-size: 12.5px; user-select: none;
+    list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  details.sources summary::-webkit-details-marker { display: none; }
+  details.sources summary::before { content: "\25B8"; transition: transform .15s; display: inline-block; }
+  details.sources[open] summary::before { transform: rotate(90deg); }
+  .src { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+  .src-row { font: 12px var(--mono); }
+  .src-head { display: flex; align-items: center; gap: 10px; margin-bottom: 3px; }
+  .src-file { color: var(--accent); }
+  .src-chunk { color: var(--muted); }
+  .score-track { flex: 1; max-width: 130px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+  .score-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #fbbf24); }
+  .score-num { color: var(--muted); min-width: 36px; text-align: right; }
+  .src-snippet { color: var(--muted); font: 12px var(--mono); }
+
+  .error-note { color: #f85149; font-size: 13px; }
+
+  /* ---------- composer ---------- */
+  footer { padding: 14px 22px 20px; border-top: 1px solid var(--border); background: var(--bg); }
+  .composer { max-width: 780px; margin: 0 auto; display: flex; gap: 10px; }
+  .composer textarea {
+    flex: 1; resize: none; background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; font: 15px/1.5 inherit; max-height: 140px; outline: none;
+    transition: border-color .15s;
+  }
+  .composer textarea:focus { border-color: var(--accent); }
+  .composer button {
+    background: var(--accent); color: #14161a; font-weight: 650; font-size: 14.5px;
+    border: none; border-radius: 12px; padding: 0 22px; cursor: pointer;
+    transition: filter .15s, transform .05s;
+  }
+  .composer button:hover { filter: brightness(1.08); }
+  .composer button:active { transform: scale(0.97); }
+  .composer button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .hint { max-width: 780px; margin: 8px auto 0; text-align: center; font-size: 11.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">&#129433;</div>
+  <h1>RAG via <span>Ollama</span></h1>
+  <div class="status" id="status"><span class="dot"></span><span id="status-text">connecting&hellip;</span></div>
+</header>
+
+<main id="main">
+  <div class="thread" id="thread">
+    <div class="hero" id="hero">
+      <h2>Ask your <em>local</em> knowledge base</h2>
+      <p>Every answer is retrieved from the bundled markdown corpus and grounded by
+         <b>llama3.2:1b</b> running in your own Ollama &mdash; no data leaves this machine.</p>
+      <div class="chips" id="chips"></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="composer">
+    <textarea id="input" rows="1" placeholder="Ask something about the knowledge base&hellip;"></textarea>
+    <button id="send">Ask</button>
+  </div>
+  <div class="hint">Enter to send &middot; Shift+Enter for a new line &middot; answers cite retrieved sources</div>
+</footer>
+
+<script>
+  "use strict";
+
+  const thread = document.getElementById("thread");
+  const hero   = document.getElementById("hero");
+  const input  = document.getElementById("input");
+  const send   = document.getElementById("send");
+  const chips  = document.getElementById("chips");
+
+  const SUGGESTIONS = [
+    "What is RAG and why is it useful?",
+    "How does this demo index the documents?",
+    "What chunk size and overlap does the pipeline use?",
+    "Why does the demo embed questions before searching?",
+  ];
+
+  let busy = false;
+
+  // ---------- header status ----------
+  fetch("/api/health").then(r => r.json()).then(h => {
+    document.getElementById("status-text").textContent =
+      `${h.ollama.model}  \u00b7  ${h.embedding}  \u00b7  ${h.knowledgeBase.files} files / ${h.knowledgeBase.chunks} chunks`;
+  }).catch(() => {
+    document.querySelector(".dot").style.background = "#f85149";
+    document.getElementById("status-text").textContent = "backend unreachable";
+  });
+
+  // ---------- suggestion chips ----------
+  SUGGESTIONS.forEach(q => {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = q;
+    b.onclick = () => ask(q);
+    chips.appendChild(b);
+  });
+
+  // ---------- composer ----------
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 140) + "px";
+  });
+  send.addEventListener("click", submit);
+
+  function submit() {
+    const q = input.value.trim();
+    if (!q || busy) return;
+    input.value = "";
+    input.style.height = "auto";
+    ask(q);
+  }
+
+  // ---------- chat ----------
+  function ask(question) {
+    busy = true;
+    send.disabled = true;
+    if (hero) hero.remove();
+
+    // user bubble
+    const u = document.createElement("div");
+    u.className = "msg-user";
+    u.textContent = question;
+    thread.appendChild(u);
+
+    // assistant card
+    const ai = document.createElement("div");
+    ai.className = "msg-ai";
+    ai.innerHTML = '<div class="who">llama3.2:1b &middot; grounded answer</div>' +
+                   '<div class="answer"><span class="caret"></span></div>';
+    thread.appendChild(ai);
+    const answerEl = ai.querySelector(".answer");
+    document.getElementById("main").scrollTop = 1e9;
+
+    (async () => {
+      let sources = [];
+      try {
+        const r = await fetch("/api/retrieve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const data = await r.json();
+        sources = data.sources || [];
+      } catch (e) { /* sources are best-effort */ }
+
+      renderSources(ai, sources);
+      answerEl.innerHTML = '<span class="caret"></span>';
+
+      try {
+        const res = await fetch("/api/answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status + ": " + (await res.text()));
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          answerEl.textContent = text;
+          answerEl.insertAdjacentHTML("beforeend", '<span class="caret"></span>');
+          document.getElementById("main").scrollTop = 1e9;
+        }
+        answerEl.textContent = text || "(empty response)";
+      } catch (e) {
+        answerEl.innerHTML = "";
+        const err = document.createElement("div");
+        err.className = "error-note";
+        err.textContent = "Generation failed: " + e.message;
+        answerEl.appendChild(err);
+      } finally {
+        busy = false;
+        send.disabled = false;
+        input.focus();
+      }
+    })();
+  }
+
+  function renderSources(ai, sources) {
+    if (!sources.length) return;
+    const box = document.createElement("details");
+    box.className = "sources";
+    const summary = document.createElement("summary");
+    summary.textContent = `retrieved ${sources.length} source${sources.length > 1 ? "s" : ""}`;
+    box.appendChild(summary);
+    const wrap = document.createElement("div");
+    wrap.className = "src";
+    sources.forEach(s => {
+      const row = document.createElement("div");
+      row.className = "src-row";
+      const pct = Math.max(2, Math.min(100, Math.round(s.score * 100)));
+      row.innerHTML =
+        '<div class="src-head">' +
+          `<span class="src-file">${escapeHtml(s.file)}</span>` +
+          `<span class="src-chunk">#${s.chunk}</span>` +
+          '<span class="score-track"><span class="score-fill" style="width:' + pct + '%"></span></span>' +
+          `<span class="score-num">${Number(s.score).toFixed(2)}</span>` +
+        '</div>' +
+        `<div class="src-snippet">${escapeHtml(s.snippet)}</div>`;
+      wrap.appendChild(row);
+    });
+    box.appendChild(wrap);
+    ai.appendChild(box);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  }
+
+  input.focus();
+</script>
+</body>
+</html>
