@@ -11,8 +11,9 @@
     --border: #2d333b;
     --text: #e6edf3;
     --muted: #8b949e;
-    --accent: #f97316;
-    --accent-soft: rgba(249, 115, 22, 0.12);
+    --accent: #6db33f;          /* Spring green */
+    --accent-2: #f97316;       /* Ollama orange */
+    --accent-soft: rgba(109, 179, 63, 0.12);
     --user-bubble: #1c2a3a;
     --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   }
@@ -40,26 +41,24 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 21px;
   }
-  header h1 { font-size: 16px; font-weight: 650; letter-spacing: 0.2px; }
-  header h1 span { color: var(--accent); }
+  header .titles h1 { font-size: 16px; font-weight: 650; letter-spacing: 0.2px; }
+  header .titles h1 span { color: var(--accent-2); }
+  header .titles .stack {
+    font: 11px var(--mono); color: var(--muted); letter-spacing: 0.5px; margin-top: 1px;
+  }
   .status {
     margin-left: auto; display: flex; align-items: center; gap: 8px;
     font: 12px var(--mono); color: var(--muted);
     flex-wrap: wrap; justify-content: flex-end;
   }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; box-shadow: 0 0 6px #3fb95088; }
-  .badge {
-    border: 1px solid var(--border); border-radius: 999px;
-    padding: 2px 10px; background: var(--card);
-  }
+  .dot.down { background: #f85149; box-shadow: 0 0 6px #f8514988; }
 
   /* ---------- chat area ---------- */
   main { flex: 1; overflow-y: auto; padding: 26px 22px 10px; }
   .thread { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 
-  .hero {
-    max-width: 640px; margin: 8vh auto 0; text-align: center;
-  }
+  .hero { max-width: 680px; margin: 8vh auto 0; text-align: center; }
   .hero h2 { font-size: 26px; margin-bottom: 10px; }
   .hero h2 em { color: var(--accent); font-style: normal; }
   .hero p { color: var(--muted); margin-bottom: 26px; }
@@ -90,6 +89,7 @@
     animation: blink 0.9s steps(2, start) infinite;
   }
   @keyframes blink { to { visibility: hidden; } }
+  .timings { font: 11px var(--mono); color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
 
   /* sources */
   details.sources { border-top: 1px dashed var(--border); padding-top: 10px; }
@@ -106,7 +106,7 @@
   .src-file { color: var(--accent); }
   .src-chunk { color: var(--muted); }
   .score-track { flex: 1; max-width: 130px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
-  .score-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #fbbf24); }
+  .score-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #a3e635); }
   .score-num { color: var(--muted); min-width: 36px; text-align: right; }
   .src-snippet { color: var(--muted); font: 12px var(--mono); }
 
@@ -123,7 +123,7 @@
   }
   .composer textarea:focus { border-color: var(--accent); }
   .composer button {
-    background: var(--accent); color: #14161a; font-weight: 650; font-size: 14.5px;
+    background: var(--accent); color: #10160c; font-weight: 650; font-size: 14.5px;
     border: none; border-radius: 12px; padding: 0 22px; cursor: pointer;
     transition: filter .15s, transform .05s;
   }
@@ -137,16 +137,20 @@
 
 <header>
   <div class="logo">&#129433;</div>
-  <h1>RAG via <span>Ollama</span></h1>
-  <div class="status" id="status"><span class="dot"></span><span id="status-text">connecting&hellip;</span></div>
+  <div class="titles">
+    <h1>RAG via <span>Ollama</span></h1>
+    <div class="stack">Spring Boot 3 &middot; langchain4j 0.34 &middot; SSE streaming</div>
+  </div>
+  <div class="status" id="status"><span class="dot" id="dot"></span><span id="status-text">connecting&hellip;</span></div>
 </header>
 
 <main id="main">
   <div class="thread" id="thread">
     <div class="hero" id="hero">
       <h2>Ask your <em>local</em> knowledge base</h2>
-      <p>Every answer is retrieved from the bundled markdown corpus and grounded by
-         <b>llama3.2:1b</b> running in your own Ollama &mdash; no data leaves this machine.</p>
+      <p>Answers stream token-by-token over Server-Sent Events, retrieved from a bundled
+         markdown corpus and grounded by <b>llama3.2:1b</b> in your own Ollama &mdash;
+         no data leaves this machine.</p>
       <div class="chips" id="chips"></div>
     </div>
   </div>
@@ -181,11 +185,16 @@
   // ---------- header status ----------
   fetch("/api/health").then(r => r.json()).then(h => {
     document.getElementById("status-text").textContent =
-      `${h.ollama.model}  \u00b7  ${h.embedding}  \u00b7  ${h.knowledgeBase.files} files / ${h.knowledgeBase.chunks} chunks`;
+      `${h.ollama.model}  \u00b7  ${short(h.embedding)}  \u00b7  ${h.knowledgeBase.files} files / ${h.knowledgeBase.chunks} chunks`;
+    document.getElementById("dot").classList.toggle("down", !h.ollama.up);
   }).catch(() => {
-    document.querySelector(".dot").style.background = "#f85149";
+    document.getElementById("dot").classList.add("down");
     document.getElementById("status-text").textContent = "backend unreachable";
   });
+
+  function short(embedding) {
+    return embedding.startsWith("TF-IDF") ? "TF-IDF" : embedding;
+  }
 
   // ---------- suggestion chips ----------
   SUGGESTIONS.forEach(q => {
@@ -214,7 +223,7 @@
     ask(q);
   }
 
-  // ---------- chat ----------
+  // ---------- chat over SSE ----------
   function ask(question) {
     busy = true;
     send.disabled = true;
@@ -229,62 +238,61 @@
     // assistant card
     const ai = document.createElement("div");
     ai.className = "msg-ai";
-    ai.innerHTML = '<div class="who">llama3.2:1b &middot; grounded answer</div>' +
-                   '<div class="answer"><span class="caret"></span></div>';
+    ai.innerHTML =
+      '<div class="who">llama3.2:1b &middot; grounded answer &middot; SSE</div>' +
+      '<div class="answer"><span class="caret"></span></div>';
     thread.appendChild(ai);
     const answerEl = ai.querySelector(".answer");
-    document.getElementById("main").scrollTop = 1e9;
+    scrollDown();
 
-    (async () => {
-      let sources = [];
-      try {
-        const r = await fetch("/api/retrieve", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question }),
-        });
-        const data = await r.json();
-        sources = data.sources || [];
-      } catch (e) { /* sources are best-effort */ }
+    let text = "";
+    const finish = () => { busy = false; send.disabled = false; input.focus(); };
 
-      renderSources(ai, sources);
-      answerEl.innerHTML = '<span class="caret"></span>';
+    // One SSE connection delivers everything: sources first, then tokens, then done.
+    const es = new EventSource("/api/chat/stream?question=" + encodeURIComponent(question));
 
-      try {
-        const res = await fetch("/api/answer", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question }),
-        });
-        if (!res.ok) throw new Error("HTTP " + res.status + ": " + (await res.text()));
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let text = "";
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          text += decoder.decode(value, { stream: true });
-          answerEl.textContent = text;
-          answerEl.insertAdjacentHTML("beforeend", '<span class="caret"></span>');
-          document.getElementById("main").scrollTop = 1e9;
-        }
-        answerEl.textContent = text || "(empty response)";
-      } catch (e) {
-        answerEl.innerHTML = "";
-        const err = document.createElement("div");
-        err.className = "error-note";
-        err.textContent = "Generation failed: " + e.message;
-        answerEl.appendChild(err);
-      } finally {
-        busy = false;
-        send.disabled = false;
-        input.focus();
+    es.addEventListener("sources", e => {
+      renderSources(ai, JSON.parse(e.data));
+      scrollDown();
+    });
+
+    es.addEventListener("token", e => {
+      text += JSON.parse(e.data).text;
+      answerEl.textContent = text;
+      answerEl.insertAdjacentHTML("beforeend", '<span class="caret"></span>');
+      scrollDown();
+    });
+
+    es.addEventListener("done", e => {
+      es.close();
+      const t = JSON.parse(e.data);
+      answerEl.textContent = text || "(empty response)";
+      if (t.retrievalMs !== undefined) {
+        const div = document.createElement("div");
+        div.className = "timings";
+        div.textContent = `retrieval ${t.retrievalMs} ms \u00b7 generation ${Math.round(t.generationMs)} ms`;
+        ai.appendChild(div);
       }
-    })();
+      finish();
+    });
+
+    // Note: our server-side error event and the built-in EventSource error
+    // share the same name; server events carry JSON data, connection errors do not.
+    es.addEventListener("error", e => {
+      es.close();
+      answerEl.textContent = text;
+      const err = document.createElement("div");
+      err.className = "error-note";
+      err.textContent = e.data
+        ? "Generation failed: " + JSON.parse(e.data).message
+        : "Connection to the server was lost.";
+      answerEl.appendChild(err);
+      finish();
+    });
   }
 
   function renderSources(ai, sources) {
-    if (!sources.length) return;
+    if (!sources || !sources.length) return;
     const box = document.createElement("details");
     box.className = "sources";
     const summary = document.createElement("summary");
@@ -308,6 +316,10 @@
     });
     box.appendChild(wrap);
     ai.appendChild(box);
+  }
+
+  function scrollDown() {
+    document.getElementById("main").scrollTop = 1e9;
   }
 
   function escapeHtml(s) {

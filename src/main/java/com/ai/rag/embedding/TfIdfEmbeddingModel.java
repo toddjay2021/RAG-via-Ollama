@@ -1,5 +1,10 @@
 package com.ai.rag.embedding;
 
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.output.Response;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -9,7 +14,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * A self-contained TF-IDF vector space built on the ingested corpus.
+ * A self-contained TF-IDF vector space exposed as a langchain4j
+ * {@link EmbeddingModel}.
  *
  * <p>This is the default embedding provider because it requires <b>no extra
  * model download and no special Ollama flags</b>: after the knowledge base is
@@ -19,10 +25,10 @@ import java.util.Set;
  *
  * <p>On small corpora a well-tuned lexical method like TF-IDF is a perfectly
  * competitive baseline against tiny LLM embeddings; for larger, semantically
- * diverse corpora swap in {@link OllamaEmbeddingProvider} (or any proper
- * embedding model) via {@code embedding.provider=ollama}.
+ * diverse corpora swap in an Ollama embedding model (or any other
+ * {@code EmbeddingModel} bean) via {@code rag.embedding.provider=ollama}.
  */
-public final class TfIdfEmbeddingProvider implements EmbeddingProvider {
+public class TfIdfEmbeddingModel implements EmbeddingModel {
 
     /** Common English stopwords removed before counting terms. */
     private static final Set<String> STOPWORDS = Set.of(
@@ -40,63 +46,88 @@ public final class TfIdfEmbeddingProvider implements EmbeddingProvider {
     private final Map<String, Integer> vocabulary = new HashMap<>();
 
     /** inverse document frequency per dimension. */
-    private double[] idf;
+    private double[] idf = new double[0];
 
-    private int fittedDocs = 0;
+    private int fittedDocuments = 0;
 
-    @Override
-    public void fit(List<String> corpus) {
+    /**
+     * One-time training step: builds the vocabulary and document frequencies
+     * from the corpus of knowledge-base segments. Called by the ingestion
+     * service before the corpus is embedded.
+     */
+    public synchronized void fit(List<TextSegment> corpus) {
         Map<String, Integer> docFreq = new HashMap<>();
-        for (String doc : corpus) {
-            fittedDocs++;
-            for (String term : new HashSet<>(tokenize(doc))) {
+        for (TextSegment segment : corpus) {
+            fittedDocuments++;
+            for (String term : new HashSet<>(tokenize(segment.text()))) {
                 docFreq.merge(term, 1, Integer::sum);
             }
         }
+        vocabulary.clear();
         List<String> terms = new ArrayList<>(docFreq.keySet());
         terms.sort(String::compareTo); // deterministic dimension order
         idf = new double[terms.size()];
         for (int i = 0; i < terms.size(); i++) {
             vocabulary.put(terms.get(i), i);
             // Smoothed idf: stays positive even for terms appearing in every document.
-            idf[i] = Math.log((fittedDocs + 1.0) / (docFreq.get(terms.get(i)) + 1.0)) + 1.0;
+            idf[i] = Math.log((fittedDocuments + 1.0) / (docFreq.get(terms.get(i)) + 1.0)) + 1.0;
         }
     }
 
     @Override
-    public double[] embed(String text) {
-        double[] vec = new double[dimension()];
-        if (idf == null) {
-            throw new IllegalStateException("TF-IDF provider was not fitted on a corpus yet");
+    public synchronized Response<List<Embedding>> embedAll(List<TextSegment> textSegments) {
+        if (idf.length == 0) {
+            // Defensive auto-fit: if nobody called fit() yet, treat this batch
+            // as the corpus. In the normal application flow the ingestion
+            // service always fits the model on the full corpus first.
+            fit(textSegments);
         }
+        List<Embedding> embeddings = new ArrayList<>(textSegments.size());
+        for (TextSegment segment : textSegments) {
+            embeddings.add(Embedding.from(embedToVector(segment.text())));
+        }
+        return Response.from(embeddings);
+    }
+
+    @Override
+    public synchronized int dimension() {
+        return vocabulary.size();
+    }
+
+    /** Short human-readable description, shown in the UI and logs. */
+    public synchronized String describe() {
+        return "TF-IDF (built-in, " + vocabulary.size() + " terms, " + fittedDocuments + " fitted chunks)";
+    }
+
+    /** Maps one text to its (already length-normalized) TF-IDF vector. */
+    private float[] embedToVector(String text) {
+        float[] vector = new float[vocabulary.size()];
         Map<String, Integer> counts = new HashMap<>();
         for (String token : tokenize(text)) {
             counts.merge(token, 1, Integer::sum);
         }
+        double norm = 0.0;
         for (Map.Entry<String, Integer> e : counts.entrySet()) {
             Integer idx = vocabulary.get(e.getKey());
             if (idx == null) continue; // unknown query terms are skipped
             double tf = 1.0 + Math.log(e.getValue()); // sublinear term frequency
-            vec[idx] = tf * idf[idx];
+            vector[idx] = (float) (tf * idf[idx]);
+            norm += (double) vector[idx] * vector[idx];
         }
-        return l2Normalize(vec);
-    }
-
-    @Override
-    public int dimension() {
-        return vocabulary.size();
-    }
-
-    @Override
-    public String describe() {
-        return "TF-IDF (built-in, " + dimension() + " terms, " + fittedDocs + " fitted chunks)";
+        norm = Math.sqrt(norm);
+        if (norm > 0) {
+            for (int i = 0; i < vector.length; i++) {
+                vector[i] /= norm;
+            }
+        }
+        return vector;
     }
 
     /**
      * Lowercases, strips non-alphanumeric characters and drops stopwords.
-     * No stemming is applied on purpose: keeping the exact surface form of each
-     * term makes retrieval scores easy to explain while being effective enough
-     * for a demo-scale corpus.
+     * No stemming is applied on purpose: keeping the exact surface form of
+     * each term makes retrieval scores easy to explain while being effective
+     * enough for a demo-scale corpus.
      */
     private static List<String> tokenize(String text) {
         List<String> tokens = new ArrayList<>();
@@ -106,16 +137,5 @@ public final class TfIdfEmbeddingProvider implements EmbeddingProvider {
             }
         }
         return tokens;
-    }
-
-    /** Scales the vector to unit length so cosine similarity reduces to a dot product. */
-    private static double[] l2Normalize(double[] vec) {
-        double norm = 0.0;
-        for (double v : vec) norm += v * v;
-        norm = Math.sqrt(norm);
-        if (norm > 0) {
-            for (int i = 0; i < vec.length; i++) vec[i] /= norm;
-        }
-        return vec;
     }
 }
