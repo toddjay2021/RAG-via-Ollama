@@ -3,12 +3,8 @@ package com.ai.rag.config;
 import com.ai.rag.embedding.TfIdfEmbeddingModel;
 import com.ai.rag.service.RagAssistant;
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.ollama.OllamaEmbeddingModel;
 import dev.langchain4j.model.ollama.OllamaStreamingChatModel;
-import dev.langchain4j.rag.DefaultRetrievalAugmentor;
-import dev.langchain4j.rag.RetrievalAugmentor;
-import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,11 +16,16 @@ import org.springframework.context.annotation.Configuration;
  *
  * <pre>
  *   OllamaStreamingChatModel ---&gt; RagAssistant (AiServices, streaming)
- *   EmbeddingModel  ------------+--&gt; EmbeddingStoreContentRetriever ---&gt; RetrievalAugmentor ---+
- *   InMemoryEmbeddingStore -----+                                                            |
- *                                                                                             |
- *   RagAssistant uses the augmentor to ground every answer in retrieved context &lt;------------+
+ *   InMemoryEmbeddingStore ----+--&gt; RagService (search + filtering + context injection)
+ *   EmbeddingModel ------------+        |
+ *                                      v
+ *                        passes retrieved chunks as the {{context}} template
+ *                        variable of RagAssistant.chat(question, context)
  * </pre>
+ *
+ * <p>Retrieval is deliberately NOT delegated to a langchain4j
+ * {@code RetrievalAugmentor}: the application owns the search so that the
+ * chunks shown in the UI are exactly the chunks injected into the prompt.
  */
 @Configuration(proxyBeanMethods = false)
 public class LangChain4jConfig {
@@ -86,34 +87,18 @@ public class LangChain4jConfig {
         return new InMemoryEmbeddingStore<>();
     }
 
-    @Bean
-    public EmbeddingStoreContentRetriever contentRetriever(InMemoryEmbeddingStore<TextSegment> store,
-                                                            EmbeddingModel embeddingModel,
-                                                            RagProperties props) {
-        return new EmbeddingStoreContentRetriever(
-                store, embeddingModel, props.retrieval().topK(), props.retrieval().minScore());
-    }
-
-    @Bean
-    public RetrievalAugmentor retrievalAugmentor(EmbeddingStoreContentRetriever contentRetriever) {
-        return DefaultRetrievalAugmentor.builder()
-                .contentRetriever(contentRetriever)
-                .build();
-    }
-
     // --- Assistant -----------------------------------------------------------
 
     /**
-     * The RAG chat interface implemented by langchain4j AiServices: every call
-     * is automatically augmented with retrieved context and answered in
-     * streaming mode via a {@link dev.langchain4j.service.TokenStream}.
+     * The RAG chat interface implemented by langchain4j AiServices. Retrieval
+     * is owned by the application: the caller injects the retrieved chunks as
+     * the {@code context} variable of the {@code @UserMessage} template, so no
+     * {@code RetrievalAugmentor} is registered here.
      */
     @Bean
-    public RagAssistant ragAssistant(OllamaStreamingChatModel streamingModel,
-                                     RetrievalAugmentor retrievalAugmentor) {
+    public RagAssistant ragAssistant(OllamaStreamingChatModel streamingModel) {
         return AiServices.builder(RagAssistant.class)
                 .streamingChatLanguageModel(streamingModel)
-                .retrievalAugmentor(retrievalAugmentor)
                 .systemMessageProvider(memoryId -> SYSTEM_PROMPT)
                 .build();
     }

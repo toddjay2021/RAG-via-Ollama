@@ -67,13 +67,26 @@ public class RagService {
     // --- Retrieval ------------------------------------------------------------
 
     /**
-     * Retrieves the most relevant chunks for a question. This is the same
-     * search the AiServices augmentor performs internally; doing it here once
-     * more is virtually free on the in-memory store and lets the UI show the
-     * exact scores and snippets.
+     * Retrieves the most relevant chunks for a question — the single source
+     * of truth for retrieval rules. Both the UI source list and the prompt
+     * context are derived from these matches, so what the user sees is
+     * exactly what the model is grounded on.
      */
-    public List<SourceInfo> retrieveSources(String question) {
+    public List<EmbeddingMatch<TextSegment>> retrieveMatches(String question) {
         Embedding queryEmbedding = embeddingModel.embed(question).content();
+        // A query that shares no vocabulary with the corpus (e.g. small talk
+        // against the lexical TF-IDF provider) produces a zero vector; cosine
+        // similarity is undefined for it and the store would hand back
+        // meaningless mid-range scores for arbitrary chunks. Nothing matches,
+        // by definition.
+        float[] queryVector = queryEmbedding.vector();
+        double sumSquares = 0.0;
+        for (float v : queryVector) {
+            sumSquares += (double) v * v;
+        }
+        if (sumSquares == 0.0) {
+            return List.of();
+        }
         EmbeddingSearchResult<TextSegment> result = store.search(EmbeddingSearchRequest.builder()
                 .queryEmbedding(queryEmbedding)
                 .maxResults(props.retrieval().topK())
@@ -92,8 +105,28 @@ public class RagService {
         double cutoff = matches.get(0).score() - props.retrieval().relativeMargin();
         return matches.stream()
                 .filter(match -> match.score() >= cutoff)
+                .toList();
+    }
+
+    /** The retrieved chunks as shown in the UI (file, chunk, score, snippet). */
+    public List<SourceInfo> retrieveSources(String question) {
+        return retrieveMatches(question).stream()
                 .map(RagService::toSourceInfo)
                 .toList();
+    }
+
+    /** Formats the retrieved chunks as the context block injected into the prompt. */
+    private static String buildContext(List<EmbeddingMatch<TextSegment>> matches) {
+        StringBuilder context = new StringBuilder();
+        for (EmbeddingMatch<TextSegment> match : matches) {
+            TextSegment segment = match.embedded();
+            String file = segment.metadata().getString("file_name");
+            Integer chunk = segment.metadata().getInteger("chunk_index");
+            context.append("[source: ").append(file != null ? file : "unknown")
+                    .append(" chunk ").append(chunk != null ? chunk : 0).append("]\n")
+                    .append(segment.text()).append("\n\n");
+        }
+        return context.toString();
     }
 
     private static SourceInfo toSourceInfo(EmbeddingMatch<TextSegment> match) {
@@ -116,16 +149,19 @@ public class RagService {
     /**
      * Runs one full RAG round and streams it over SSE: first the retrieved
      * sources, then the generated answer token by token, then the timings.
+     * Retrieval happens exactly once — the same filtered matches are shown in
+     * the UI and injected into the prompt as grounding context.
      */
     public SseEmitter streamChat(String question) {
         SseEmitter emitter = new SseEmitter(0L); // no timeout: generation can take a while
 
         long t0 = System.nanoTime();
-        List<SourceInfo> sources = retrieveSources(question);
+        List<EmbeddingMatch<TextSegment>> matches = retrieveMatches(question);
+        List<SourceInfo> sources = matches.stream().map(RagService::toSourceInfo).toList();
         long retrievalMs = (System.nanoTime() - t0) / 1_000_000;
 
         send(emitter, "sources", sources);
-        if (sources.isEmpty()) {
+        if (matches.isEmpty()) {
             send(emitter, "token", new TokenPayload(
                     "The knowledge base does not contain anything relevant to this question."));
             send(emitter, "done", new Timings(retrievalMs, 0));
@@ -134,7 +170,7 @@ public class RagService {
         }
 
         long t1 = System.nanoTime();
-        TokenStream stream = assistant.chat(question);
+        TokenStream stream = assistant.chat(question, buildContext(matches));
         stream
                 .onNext(token -> send(emitter, "token", new TokenPayload(token)))
                 .onComplete(response -> {

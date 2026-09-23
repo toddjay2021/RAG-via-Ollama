@@ -21,14 +21,14 @@ in a small bundled knowledge base. No API keys, no cloud services, no data leavi
 
 A compact, production-shaped reference for the **full RAG pipeline on Spring Boot + langchain4j**:
 typed configuration, conditional bean wiring, a custom `EmbeddingModel`, an `AiServices`-built
-assistant with a `RetrievalAugmentor`, and token-by-token streaming pushed to the browser over
-Server-Sent Events. Every component is small enough to read in one sitting and swappable enough
-to grow into a production service.
+streaming assistant with application-owned retrieval, and token-by-token streaming pushed to the
+browser over Server-Sent Events. Every component is small enough to read in one sitting and
+swappable enough to grow into a production service.
 
 | What is demonstrated | Where |
 |---|---|
 | Spring Boot 3 + `@ConfigurationProperties` (record binding) | [`RagProperties`](src/main/java/com/ai/rag/config/RagProperties.java) |
-| langchain4j bean wiring (`AiServices`, `RetrievalAugmentor`, `EmbeddingStore`) | [`LangChain4jConfig`](src/main/java/com/ai/rag/config/LangChain4jConfig.java) |
+| langchain4j bean wiring (`AiServices`, `EmbeddingStore`) | [`LangChain4jConfig`](src/main/java/com/ai/rag/config/LangChain4jConfig.java) |
 | Custom `EmbeddingModel` (TF-IDF) plugged into langchain4j | [`TfIdfEmbeddingModel`](src/main/java/com/ai/rag/embedding/TfIdfEmbeddingModel.java) |
 | Streaming assistant interface (`TokenStream`) | [`RagAssistant`](src/main/java/com/ai/rag/service/RagAssistant.java) |
 | Startup ingestion: split → fit → embed → store | [`KnowledgeBaseService`](src/main/java/com/ai/rag/service/KnowledgeBaseService.java) |
@@ -56,9 +56,11 @@ flowchart LR
     end
 ```
 
-The assistant is assembled with langchain4j `AiServices`: it wires the streaming chat model,
-the `RetrievalAugmentor` (content retriever over the embedding store) and the grounding system
-prompt into one interface. A parallel store search feeds the UI's source cards with exact scores.
+The assistant is assembled with langchain4j `AiServices`: it wires the streaming chat model and
+the grounding system prompt into one interface. Retrieval is deliberately owned by the
+application, not by a `RetrievalAugmentor`: `RagService` applies the score thresholds itself and
+injects the surviving chunks as the `{{context}}` variable of the assistant's `@UserMessage`
+template — so the source cards in the UI are exactly the chunks the model is grounded on.
 
 ## SSE event protocol
 

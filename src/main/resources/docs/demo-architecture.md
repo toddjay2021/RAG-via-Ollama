@@ -10,9 +10,10 @@ over Server-Sent Events (SSE).
 - **OllamaStreamingChatModel** - langchain4j's streaming chat model for the
   local Ollama server, configured with llama3.2:1b.
 - **RagAssistant** - a one-method interface implemented at runtime by
-  langchain4j AiServices. Every call is automatically augmented: the question
-  retrieves relevant chunks, they are injected into the prompt together with
-  the guardrail system message, and the answer is streamed back.
+  langchain4j AiServices. Its `@UserMessage` template injects the retrieved
+  chunks as a `{{context}}` variable; the guardrail rules live in the system
+  message. Retrieval is owned by the application, so the answer is grounded
+  in exactly the chunks the UI shows.
 - **TfIdfEmbeddingModel** - a custom langchain4j EmbeddingModel implementing
   a lexical TF-IDF vector space over the ingested corpus. It needs no extra
   model download, which is why the whole demo runs with a single
@@ -20,9 +21,11 @@ over Server-Sent Events (SSE).
   (nomic-embed-text) by setting `rag.embedding.provider=ollama`.
 - **InMemoryEmbeddingStore** - langchain4j's built-in vector store; each
   stored entry is a TextSegment with file name and chunk index metadata.
-- **EmbeddingStoreContentRetriever / RetrievalAugmentor** - the retrieval
-  leg of the pipeline, wired as Spring beans and shared by the assistant and
-  the sources endpoint.
+- **RagService retrieval rules** - the single retrieval leg of the pipeline:
+  embed the question, take the top-K cosine matches from the embedding
+  store, then apply the absolute minimum-score floor and the relative
+  margin. The surviving matches feed both the UI source cards and the
+  prompt context, so the two can never diverge.
 - **KnowledgeBaseService** - startup ingestion: loads .md/.txt documents
   from an external folder or the bundled classpath folder, splits them with
   DocumentSplitters.recursive (700 characters, 120 overlap), fits the TF-IDF
@@ -34,15 +37,17 @@ over Server-Sent Events (SSE).
 ## Answering a question, step by step
 
 1. The browser opens an EventSource to `/api/chat/stream?question=...`.
-2. The question is embedded with the same model used at ingestion time.
-3. The embedding store ranks every segment by cosine similarity and returns
-   the top 3. Two thresholds then apply: chunks under the absolute minimum
-   score are dropped (guarding against "everything is weak"), and chunks
-   scoring far below the best hit are dropped by a relative margin, so a
-   strong match is not diluted by noise. The survivors are sent to the
-   browser first.
-4. AiServices builds the augmented prompt: the system guardrails, the
-   retrieved context excerpts with their source files, and the question.
+2. RagService embeds the question with the same model used at ingestion
+   time. If the query shares no vocabulary with the corpus (a zero vector),
+   no sources are returned at all.
+3. The embedding store ranks every segment by cosine similarity. Two
+   thresholds then apply: chunks under the absolute minimum score are
+   dropped (guarding against "everything is weak"), and chunks scoring far
+   below the best hit are dropped by a relative margin, so a strong match is
+   not diluted by noise. The survivors are sent to the browser first.
+4. AiServices renders the prompt: the system guardrails plus a user message
+   carrying the retrieved context excerpts (with their source files) and the
+   question.
 5. llama3.2:1b generates the answer and every token is forwarded to the
    browser as an SSE `token` event, followed by a final `done` event.
 

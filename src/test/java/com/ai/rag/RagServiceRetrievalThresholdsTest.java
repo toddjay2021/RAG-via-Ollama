@@ -80,4 +80,15 @@ class RagServiceRetrievalThresholdsTest {
         // reachable by identical texts) yields no matches at all.
         assertTrue(sources.isEmpty());
     }
+
+    @Test
+    void returnsNothingWhenQuerySharesNoVocabularyWithTheCorpus() {
+        List<RagService.SourceInfo> sources = service(0.0, 0.05)
+                .retrieveSources("purple elephant quantum yoga");
+
+        // None of these words exist in the fitted vocabulary, so the query
+        // vector is all zeros and cosine similarity is undefined — the
+        // service must return no sources instead of arbitrary 0.5 scores.
+        assertTrue(sources.isEmpty());
+    }
 }
